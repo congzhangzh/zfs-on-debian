@@ -2,7 +2,7 @@
 
 [![shellcheck](https://github.com/terem42/zfs-hetzner-vm/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/terem42/zfs-hetzner-vm/actions/workflows/shellcheck.yml)
 
-Scripts to install Debian 11, 10 or Ubuntu 18 LTS, 20 LTS, 22 LTS with ZFS root on Hetzner root servers (virtual and dedicated).<br/>
+Scripts to install Debian 10, 11, 12 or Ubuntu 18 LTS, 20 LTS, 22 LTS with ZFS root on Hetzner root servers (virtual and dedicated).<br/>
 __WARNING:__ all data on the disk will be destroyed.
 
 ## How to use:
@@ -22,6 +22,12 @@ Debian 11 minimal setup with SSH server
 
 ````bash
 wget -qO- https://raw.githubusercontent.com/terem42/zfs-hetzner-vm/master/hetzner-debian11-zfs-setup.sh | bash -
+````
+
+Debian 12 minimal setup with SSH server
+
+````bash
+wget -qO- https://raw.githubusercontent.com/terem42/zfs-hetzner-vm/master/hetzner-debian12-zfs-setup.sh | bash -
 ````
 
 Ubuntu 18.04 LTS minimal setup with SSH server
@@ -48,7 +54,7 @@ To cope with network failures its higly recommended to run the commands above in
 Example of screen utility usage:
 
 ````bash
-screen -S zfs
+export LC_ALL=en_US.UTF-8 && screen -S zfs
 ````
 To detach from screen console, hit Ctrl-d then a
 To reattach, type `screen -r zfs`
