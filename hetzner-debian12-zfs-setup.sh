@@ -2,7 +2,7 @@
 
 : <<'end_header_info'
 (c) Andrey Prokopenko job@terem.fr
-fully automatic script to install Debian 11 with ZFS root on Hetzner VPS
+fully automatic script to install Debian 12 with ZFS root on Hetzner VPS
 WARNING: all data on the disk will be destroyed
 How to use: add SSH key to the rescue console, set it OS to linux64, then press "mount rescue and power cycle" button
 Next, connect via SSH to console, and run the script
@@ -18,6 +18,7 @@ set -o pipefail
 set -o nounset
 
 export TMPDIR=/tmp
+export DEBIAN_FRONTEND=noninteractive
 
 # Variables
 v_bpool_name=
@@ -49,6 +50,7 @@ c_log_dir=$(dirname "$(mktemp)")/zfs-hetzner-vm
 c_install_log=$c_log_dir/install.log
 c_lsb_release_log=$c_log_dir/lsb_release.log
 c_disks_log=$c_log_dir/disks.log
+c_efimode_enabled="$(if [[ -d /sys/firmware/efi/efivars ]]; then echo 1; else echo 0; fi)"
 
 function activate_debug {
   mkdir -p "$c_log_dir"
@@ -107,7 +109,7 @@ function display_intro_banner {
   print_step_info_header
 
   local dialog_message='Hello!
-This script will prepare the ZFS pools, then install and configure minimal Debian 11 with ZFS root on Hetzner hosting VPS instance
+This script will prepare the ZFS pools, then install and configure minimal Debian 12 with ZFS root on Hetzner hosting VPS instance
 The script with minimal changes may be used on any other hosting provider  supporting KVM virtualization and offering Debian-based rescue system.
 In order to stop the procedure, hit Esc twice during dialogs (excluding yes/no ones), or Ctrl+C while any operation is running.
 '
@@ -400,7 +402,7 @@ function determine_kernel_variant {
 }
 
 function chroot_execute {
-  chroot $c_zfs_mount_dir bash -c "$1"
+  chroot $c_zfs_mount_dir bash -c "DEBIAN_FRONTEND=noninteractive $1"
 }
 
 function unmount_and_export_fs {
@@ -490,8 +492,12 @@ clear
 
 echo "===========remove unused kernels in rescue system========="
 for kver in $(find /lib/modules/* -maxdepth 0 -type d | grep -v "$(uname -r)" | cut -s -d "/" -f 4); do
-  apt purge --yes "linux-headers-$kver"
-  apt purge --yes "linux-image-$kver"
+  if dpkg -l "linux-headers-$kver" 2>/dev/null | grep -q "^ii"; then
+    apt purge --yes "linux-headers-$kver"
+  fi
+  if dpkg -l "linux-image-$kver" 2>/dev/null | grep -q "^ii"; then
+    apt purge --yes "linux-image-$kver"
+  fi
 done
 
 echo "======= installing zfs on rescue system =========="
@@ -505,7 +511,7 @@ echo "======= installing zfs on rescue system =========="
   echo -e "deb http://deb.debian.org/debian/ testing main contrib non-free\ndeb http://deb.debian.org/debian/ testing main contrib non-free\n" >/etc/apt/sources.list.d/bookworm-testing.list
   echo -e "Package: src:zfs-linux\nPin: release n=testing\nPin-Priority: 990\n" > /etc/apt/preferences.d/90_zfs
   apt update  
-  apt install -t testing --yes zfs-dkms zfsutils-linux
+  apt install -t testing --yes -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" zfs-dkms zfsutils-linux
   rm /etc/apt/sources.list.d/bookworm-testing.list
   rm /etc/apt/preferences.d/90_zfs
   apt update
@@ -522,7 +528,11 @@ echo "======= partitioning the disk =========="
 
   for selected_disk in "${v_selected_disks[@]}"; do
     wipefs --all --force "$selected_disk"
-    sgdisk -a1 -n1:24K:+1000K            -t1:EF02 "$selected_disk"
+    if (( c_efimode_enabled == 1 )); then
+      sgdisk -a1 -n1:24K:+1G            -t1:EF00 "$selected_disk" # EFI partition
+    else
+      sgdisk -a1 -n1:24K:+1000K            -t1:EF02 "$selected_disk"
+    fi
     sgdisk -n2:0:+2G                   -t2:BF01 "$selected_disk" # Boot pool
     sgdisk -n3:0:"$tail_space_parameter" -t3:BF01 "$selected_disk" # Root pool
   done
@@ -553,13 +563,15 @@ echo "======= create zfs pools and datasets =========="
 
 # shellcheck disable=SC2086
 zpool create \
-  $v_bpool_tweaks -O canmount=off -O devices=off \
+  -m none \
   -o cachefile=/etc/zpool.cache \
+  -o compatibility=grub2 \
   -O mountpoint=/boot -R $c_zfs_mount_dir -f \
   $v_bpool_name $pools_mirror_option "${bpool_disks_partitions[@]}"
 
 # shellcheck disable=SC2086
 echo -n "$v_passphrase" | zpool create \
+  -m none \
   $v_rpool_tweaks \
   -o cachefile=/etc/zpool.cache \
   "${encryption_options[@]}" \
@@ -604,6 +616,16 @@ if [[ $v_swap_size -gt 0 ]]; then
   udevadm settle
 
   mkswap -f "/dev/zvol/$v_rpool_name/swap"
+fi
+
+if (( c_efimode_enabled == 1 )); then
+echo "======= create filesystem on EFI partition(s) =========="
+
+  for selected_disk in "${v_selected_disks[@]}"; do
+    mkfs.fat -F32 "${selected_disk}-part1"
+  done
+  mkdir -p "$c_zfs_mount_dir/boot/efi"
+  mount "${v_selected_disks[0]}-part1" "$c_zfs_mount_dir/boot/efi"
 fi
 
 echo "======= setting up initial system packages =========="
@@ -694,7 +716,6 @@ console-setup   console-setup/fontsize-text47   select  8x16
 console-setup   console-setup/codesetcode       string  Lat15
 tzdata tzdata/Areas select Europe
 tzdata tzdata/Zones/Europe select Vienna
-grub-pc grub-pc/install_devices_empty   boolean true
 CONF'
 
 chroot_execute "dpkg-reconfigure locales -f noninteractive"
@@ -752,12 +773,22 @@ echo "========setting up zfs module parameters========"
 chroot_execute "echo options zfs zfs_arc_max=$((v_zfs_arc_max_mb * 1024 * 1024)) >> /etc/modprobe.d/zfs.conf"
 
 echo "======= setting up grub =========="
-chroot_execute "echo 'grub-pc grub-pc/install_devices_empty   boolean true' | debconf-set-selections"
-chroot_execute "DEBIAN_FRONTEND=noninteractive apt install --yes grub-legacy"
-chroot_execute "DEBIAN_FRONTEND=noninteractive apt install --yes grub-pc"
-for disk in ${v_selected_disks[@]}; do
-  chroot_execute "grub-install --recheck $disk"
-done
+if (( c_efimode_enabled == 1 )); then
+  chroot_execute "apt install --yes grub-efi-amd64"
+else
+  chroot_execute "echo 'grub-pc grub-pc/install_devices_empty   boolean true' | debconf-set-selections"
+  chroot_execute "apt install --yes grub-legacy"
+  chroot_execute "apt install --yes grub-pc"
+fi
+
+if (( c_efimode_enabled == 1 )); then
+  #chroot_execute grub-probe /boot
+  chroot_execute grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck
+else
+  for disk in ${v_selected_disks[@]}; do
+    chroot_execute "grub-install --recheck $disk"
+  done
+fi
 
 chroot_execute "sed -i 's/#GRUB_TERMINAL=console/GRUB_TERMINAL=console/g' /etc/default/grub"
 chroot_execute "sed -i 's|GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"net.ifnames=0\"|' /etc/default/grub"
@@ -855,6 +886,10 @@ else
 fi
 
 echo "======= setting mountpoints =========="
+if (( c_efimode_enabled == 1 )); then
+  umount "$c_zfs_mount_dir/boot/efi"
+fi
+
 chroot_execute "zfs set mountpoint=legacy $v_bpool_name/BOOT/debian"
 chroot_execute "echo $v_bpool_name/BOOT/debian /boot zfs nodev,relatime,x-systemd.requires=zfs-mount.service,x-systemd.device-timeout=10 0 0 > /etc/fstab"
 
