@@ -320,6 +320,8 @@ function select_disks {
     fi
 
     for disk_id in "${v_suitable_disks[@]}"; do
+      local block_device_basename
+      block_device_basename="$(basename "$disk_id")"
       menu_entries_option+=("$disk_id" "($block_device_basename)" "$disk_selection_status")
     done
 
