@@ -13,6 +13,10 @@ screen -r zfs
 To detach from screen console, hit Ctrl-d then a
 end_header_info
 
+if [[ $DEBUG == 1 ]]; then
+  set -x 
+fi
+
 set -o errexit
 set -o pipefail
 set -o nounset
@@ -47,6 +51,11 @@ c_default_zfs_arc_max_mb=$(
   else
     echo $((total_mem_mb / 4))
   fi
+)
+c_default_swap_size_gb=$(
+  total_mem_mb=$(free -m | awk 'NR==2{print $2}' 2>/dev/null || echo 1024)
+  # Calculate 2x memory in GB (rounded up)
+  echo $(((total_mem_mb * 2 + 1023) / 1024))
 )
 c_default_bpool_tweaks="-o ashift=12 -O compression=lz4"
 c_default_rpool_tweaks="-o ashift=12 -O acltype=posixacl -O compression=zstd-9 -O dnodesize=auto -O relatime=on -O xattr=sa -O normalization=formD"
@@ -346,7 +355,7 @@ function ask_swap_size {
   local swap_size_invalid_message=
 
   while [[ ! $v_swap_size =~ ^[0-9]+$ ]]; do
-    v_swap_size=$(dialog --inputbox "${swap_size_invalid_message}Enter the swap size in GiB (0 for no swap):" 30 100 2 3>&1 1>&2 2>&3)
+    v_swap_size=$(dialog --inputbox "${swap_size_invalid_message}Enter the swap size in GiB (0 for no swap, default: ${c_default_swap_size_gb}GB = 2x memory):" 30 100 "$c_default_swap_size_gb" 3>&1 1>&2 2>&3)
 
     swap_size_invalid_message="Invalid swap size! "
   done
@@ -548,6 +557,44 @@ activate_debug
 
 display_intro_banner
 
+echo "--begin-- cleaning-up-any-existing-ZFS-state========="
+echo "Unmounting all mounts in /mnt..."
+umount -R /mnt 2>/dev/null || true
+
+# Export any existing pools
+for pool in $(zpool list -H -o name 2>/dev/null || true); do
+  echo "Exporting pool: $pool"
+  zpool export "$pool" 2>/dev/null || true
+done
+
+# Force destroy if export failed
+for pool in $(zpool list -H -o name 2>/dev/null || true); do
+  echo "Force destroying pool: $pool"
+  zpool destroy -f "$pool" 2>/dev/null || true
+done
+
+# # Clean up any remaining ZFS labels on devices
+# for device in /dev/sd* /dev/nvme* /dev/vd* ; do
+#   if [[ -b "$device" ]] && [[ ! "$device" =~ .*[0-9]$ ]]; then
+#     echo "Clearing ZFS labels on $device"
+#     zpool labelclear -f "$device" 2>/dev/null || true
+#   fi
+# done
+
+# # Clean up any remaining partition mounts
+# for device in /dev/sd*[0-9] /dev/nvme*p[0-9] /dev/vd*[0-9] ; do
+#   if [[ -b "$device" ]]; then
+#     echo "Unmounting $device"
+#     umount -f "$device" 2>/dev/null || true
+#   fi
+# done
+
+# Force refresh device state
+udevadm settle
+partprobe 2>/dev/null || true
+
+echo "--end-- cleaning-up-any-existing-ZFS-state========="
+
 find_suitable_disks
 
 select_disks
@@ -598,29 +645,95 @@ echo "======= partitioning the disk =========="
   fi
 
   for selected_disk in "${v_selected_disks[@]}"; do
-    wipefs --all --force "$selected_disk"
+    echo "Partitioning disk: $selected_disk"
+    # Clear existing partition table
+    wipefs --all --force "$selected_disk" || {
+      echo "Failed to wipe $selected_disk"
+      exit 1
+    }
+    
+    # Create all partitions in one go for atomicity
     if (( c_efimode_enabled == 1 )); then
-      sgdisk -a1 -n1:24K:+1G            -t1:EF00 "$selected_disk" # EFI partition
+      sgdisk -a1 \
+        -n1:24K:+1G -t1:EF00 \
+        -n2:0:+2G -t2:BF01 \
+        -n3:0:"$tail_space_parameter" -t3:BF01 \
+        "$selected_disk" || {
+        echo "Failed to create partitions on $selected_disk"
+        exit 1
+      }
     else
-      sgdisk -a1 -n1:24K:+1000K            -t1:EF02 "$selected_disk"
+      sgdisk -a1 \
+        -n1:24K:+1000K -t1:EF02 \
+        -n2:0:+2G -t2:BF01 \
+        -n3:0:"$tail_space_parameter" -t3:BF01 \
+        "$selected_disk" || {
+        echo "Failed to create partitions on $selected_disk"
+        exit 1
+      }
     fi
-    sgdisk -n2:0:+2G                   -t2:BF01 "$selected_disk" # Boot pool
-    sgdisk -n3:0:"$tail_space_parameter" -t3:BF01 "$selected_disk" # Root pool
+    
+    # Force kernel to re-read partition table
+    if command -v partprobe >/dev/null 2>&1; then
+      partprobe "$selected_disk" 2>/dev/null || true
+    elif command -v blockdev >/dev/null 2>&1; then
+      # Alternative: force re-read using blockdev
+      blockdev --rereadpt "$selected_disk" 2>/dev/null || true
+    else
+      echo "No partprobe or blockdev found, skipping partition table re-read"
+    fi
+    
+    # Wait for devices to settle
+    udevadm settle
+    #TODO better way to wait for devices to settle?
+    sleep 2
+    
+    # Verify partitions were created
+    if [[ ! -b "${selected_disk}1" ]] || [[ ! -b "${selected_disk}2" ]] || [[ ! -b "${selected_disk}3" ]]; then
+      echo "ERROR: Not all partitions were created on $selected_disk"
+      echo "Expected: ${selected_disk}1, ${selected_disk}2, ${selected_disk}3"
+      echo "Actual:"
+      ls -la "${selected_disk}"* || true
+      exit 1
+    fi
+    
+    echo "Successfully created partitions on $selected_disk"
   done
 
   udevadm settle
 
 echo "======= create zfs pools and datasets =========="
 
+echo "======= cleaning up existing pools =========="
+# Clean up any existing pools that might conflict
+zpool export bpool 2>/dev/null || true
+zpool export rpool 2>/dev/null || true
+echo "Existing pools cleaned up"
+
+echo "======= preparing mount directory =========="
+# Unmount anything in /mnt if mounted
+if mountpoint -q "$c_zfs_mount_dir"; then
+  umount -R "$c_zfs_mount_dir" || true
+fi
+
+# Clean up the mount directory
+# TODO: safe way to clean up the mount directory?
+rm -rf $c_zfs_mount_dir
+[[ -d $c_zfs_mount_dir ]] && {
+  echo "rm failed, still in use of $c_zfs_mount_dir"
+  exit 1
+}
+mkdir -p $c_zfs_mount_dir
+
+echo "Mount directory prepared"
+
   encryption_options=()
   rpool_disks_partitions=()
   bpool_disks_partitions=()
   efi_disks_partitions=()
-
   if [[ $v_encrypt_rpool == "1" ]]; then
     encryption_options=(-O "encryption=aes-256-gcm" -O "keylocation=prompt" -O "keyformat=passphrase")
   fi
-
   # Get partition UUIDs after device settlement (more reliable than hardcoded -partN)
   for selected_disk in "${v_selected_disks[@]}"; do    
     # Get PARTUUIDs for each partition type
@@ -639,7 +752,6 @@ echo "======= create zfs pools and datasets =========="
       efi_disks_partitions+=("$efi_partuuid")
     fi
   done
-
   pools_mirror_option=
   if [[ ${#v_selected_disks[@]} -gt 1 ]]; then
     if dialog --defaultno --yesno "Do you want to use mirror mode for ${v_selected_disks[*]}?" 30 100; then 
@@ -649,80 +761,78 @@ echo "======= create zfs pools and datasets =========="
 
 # shellcheck disable=SC2086
 zpool create \
-  -m none \
   -o cachefile=/etc/zpool.cache \
   -o compatibility=grub2 \
   -O mountpoint=/boot -R $c_zfs_mount_dir -f \
   $v_bpool_name $pools_mirror_option "${bpool_disks_partitions[@]}"
 
+
+[[ -d $c_zfs_mount_dir/boot ]] && {
+  echo "uncondational auto create boot directory by zpool create, need investigate"
+  echo "temp unmount and remove $c_zfs_mount_dir/boot directory"
+  umount -R $c_zfs_mount_dir/boot 2>/dev/null || true
+  rm -rf $c_zfs_mount_dir/boot
+}
+
+# 手动运行相同的清理步骤
 # shellcheck disable=SC2086
 echo -n "$v_passphrase" | zpool create \
-  -m none \
   $v_rpool_tweaks \
   -o cachefile=/etc/zpool.cache \
   "${encryption_options[@]}" \
   -O mountpoint=/ -R $c_zfs_mount_dir -f \
   $v_rpool_name $pools_mirror_option "${rpool_disks_partitions[@]}"
-
 zfs create -o canmount=off -o mountpoint=none "$v_rpool_name/ROOT"
 zfs create -o canmount=off -o mountpoint=none "$v_bpool_name/BOOT"
-
 zfs create -o canmount=noauto -o mountpoint=/ "$v_rpool_name/ROOT/debian"
 zfs mount "$v_rpool_name/ROOT/debian"
-
 zfs create -o canmount=noauto -o mountpoint=/boot "$v_bpool_name/BOOT/debian"
 zfs mount "$v_bpool_name/BOOT/debian"
-
 zfs create                                 "$v_rpool_name/home"
 #zfs create -o mountpoint=/root             "$v_rpool_name/home/root"
 zfs create -o canmount=off                 "$v_rpool_name/var"
 zfs create                                 "$v_rpool_name/var/log"
 zfs create                                 "$v_rpool_name/var/spool"
-
 zfs create -o com.sun:auto-snapshot=false  "$v_rpool_name/var/cache"
 zfs create -o com.sun:auto-snapshot=false  "$v_rpool_name/var/tmp"
 chmod 1777 "$c_zfs_mount_dir/var/tmp"
-
 zfs create                                 "$v_rpool_name/srv"
 
 zfs create -o canmount=off                 "$v_rpool_name/usr"
 zfs create                                 "$v_rpool_name/usr/local"
-
 zfs create                                 "$v_rpool_name/var/mail"
 
 zfs create -o com.sun:auto-snapshot=false -o canmount=on -o mountpoint=/tmp "$v_rpool_name/tmp"
 chmod 1777 "$c_zfs_mount_dir/tmp"
-
 if [[ $v_swap_size -gt 0 ]]; then
   zfs create \
     -V "${v_swap_size}G" -b "$(getconf PAGESIZE)" \
     -o compression=zle -o logbias=throughput -o sync=always -o primarycache=metadata -o secondarycache=none -o com.sun:auto-snapshot=false \
     "$v_rpool_name/swap"
-
   udevadm settle
-
   mkswap -f "/dev/zvol/$v_rpool_name/swap"
 fi
-
 if (( c_efimode_enabled == 1 )); then
 echo "======= create filesystem on EFI partition(s) =========="
-
   for efi_partuuid in "${efi_disks_partitions[@]}"; do
     mkfs.fat -F32 "/dev/disk/by-partuuid/$efi_partuuid"
   done
   mkdir -p "$c_zfs_mount_dir/boot/efi"
   mount "/dev/disk/by-partuuid/${efi_disks_partitions[0]}" "$c_zfs_mount_dir/boot/efi"
 fi
-
 echo "======= setting up initial system packages =========="
+
+# Ensure debootstrap is available
+if ! command -v debootstrap >/dev/null 2>&1; then
+  echo "Installing debootstrap..."
+  apt update
+  apt install -y debootstrap
+fi
+
 debootstrap --arch=amd64 "$c_debian_version" "$c_zfs_mount_dir" "$c_deb_packages_repo"
-
 zfs set devices=off "$v_rpool_name"
-
 echo "======= setting up the network =========="
-
 echo "$v_hostname" > $c_zfs_mount_dir/etc/hostname
-
 cat > "$c_zfs_mount_dir/etc/hosts" <<CONF
 127.0.1.1 ${v_hostname}
 127.0.0.1 localhost
@@ -923,6 +1033,11 @@ chroot_execute "apt purge cryptsetup* --yes"
 
 echo "===========add static route to initramfs via hook to add default routes for Hetzner due to Debian/Ubuntu initramfs DHCP bug ========="
 mkdir -p "$c_zfs_mount_dir/usr/share/initramfs-tools/scripts/init-premount"
+
+# TODO: how to get the provider info?
+# dmidecode -s system-manufacturer 2>/dev/null || echo "N/A" => netcup
+# dmidecode -s system-product-name 2>/dev/null || echo "N/A" => KVM Server
+# dmidecode -s bios-vendor 2>/dev/null || echo "N/A" => netcup
 cat > "$c_zfs_mount_dir/usr/share/initramfs-tools/scripts/init-premount/static-route" <<'CONF'
 #!/bin/sh
 PREREQ=""
@@ -943,8 +1058,9 @@ esac
 
 configure_networking
 
-ip route add 172.31.1.1/255.255.255.255 dev eth0
-ip route add default via 172.31.1.1 dev eth0
+# TODO: how about other provider, like netcup?
+# ip route add 172.31.1.1/255.255.255.255 dev eth0
+# ip route add default via 172.31.1.1 dev eth0
 CONF
 
 chmod 755 "$c_zfs_mount_dir/usr/share/initramfs-tools/scripts/init-premount/static-route"
