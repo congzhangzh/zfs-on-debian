@@ -28,3 +28,6 @@ sysctl --system
 DEBUG=1
 curl -sSL http://your-server:8000/hetzner-debian12-zfs-setup.sh | bash
 ```
+
+# tips
+you may need touch ~/.ssh/authorized_keys by yourself
