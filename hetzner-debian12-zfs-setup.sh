@@ -58,7 +58,8 @@ c_default_swap_size_gb=$(
   echo $(((total_mem_mb * 2 + 1023) / 1024))
 )
 c_default_bpool_tweaks="-o ashift=12 -O compression=lz4"
-c_default_rpool_tweaks="-o ashift=12 -O acltype=posixacl -O compression=zstd-9 -O dnodesize=auto -O relatime=on -O xattr=sa -O normalization=formD"
+#c_default_rpool_tweaks="-o ashift=12 -O acltype=posixacl -O compression=zstd-9 -O dnodesize=auto -O relatime=on -O xattr=sa -O normalization=formD"
+c_default_rpool_tweaks="-o ashift=12 -O acltype=posixacl -O compression=lz4 -O dnodesize=auto -O relatime=on -O xattr=sa -O normalization=formD"
 c_default_hostname=terem
 c_zfs_mount_dir=/mnt
 c_log_dir=$(dirname "$(mktemp)")/zfs-hetzner-vm
@@ -788,28 +789,30 @@ zfs create -o canmount=noauto -o mountpoint=/ "$v_rpool_name/ROOT/debian"
 zfs mount "$v_rpool_name/ROOT/debian"
 zfs create -o canmount=noauto -o mountpoint=/boot "$v_bpool_name/BOOT/debian"
 zfs mount "$v_bpool_name/BOOT/debian"
-zfs create                                 "$v_rpool_name/home"
-#zfs create -o mountpoint=/root             "$v_rpool_name/home/root"
-zfs create -o canmount=off                 "$v_rpool_name/var"
-zfs create                                 "$v_rpool_name/var/log"
-zfs create                                 "$v_rpool_name/var/spool"
-zfs create -o com.sun:auto-snapshot=false  "$v_rpool_name/var/cache"
-zfs create -o com.sun:auto-snapshot=false  "$v_rpool_name/var/tmp"
-chmod 1777 "$c_zfs_mount_dir/var/tmp"
-zfs create                                 "$v_rpool_name/srv"
+# zfs create                                 "$v_rpool_name/home"
+# #zfs create -o mountpoint=/root             "$v_rpool_name/home/root"
+# zfs create -o canmount=off                 "$v_rpool_name/var"
+# zfs create                                 "$v_rpool_name/var/log"
+# zfs create                                 "$v_rpool_name/var/spool"
+# zfs create -o com.sun:auto-snapshot=false  "$v_rpool_name/var/cache"
+# zfs create -o com.sun:auto-snapshot=false  "$v_rpool_name/var/tmp"
+# chmod 1777 "$c_zfs_mount_dir/var/tmp"
+# zfs create                                 "$v_rpool_name/srv"
 
-zfs create -o canmount=off                 "$v_rpool_name/usr"
-zfs create                                 "$v_rpool_name/usr/local"
-zfs create                                 "$v_rpool_name/var/mail"
+# zfs create -o canmount=off                 "$v_rpool_name/usr"
+# zfs create                                 "$v_rpool_name/usr/local"
+# zfs create                                 "$v_rpool_name/var/mail"
 
-zfs create -o com.sun:auto-snapshot=false -o canmount=on -o mountpoint=/tmp "$v_rpool_name/tmp"
-chmod 1777 "$c_zfs_mount_dir/tmp"
+# zfs create -o com.sun:auto-snapshot=false -o canmount=on -o mountpoint=/tmp "$v_rpool_name/tmp"
+# chmod 1777 "$c_zfs_mount_dir/tmp"
 if [[ $v_swap_size -gt 0 ]]; then
   zfs create \
     -V "${v_swap_size}G" -b "$(getconf PAGESIZE)" \
     -o compression=zle -o logbias=throughput -o sync=always -o primarycache=metadata -o secondarycache=none -o com.sun:auto-snapshot=false \
     "$v_rpool_name/swap"
   udevadm settle
+  #TODO: why need sleep 2?
+  sleep 2
   mkswap -f "/dev/zvol/$v_rpool_name/swap"
 fi
 if (( c_efimode_enabled == 1 )); then
@@ -1090,14 +1093,14 @@ fi
 chroot_execute "zfs set mountpoint=legacy $v_bpool_name/BOOT/debian"
 chroot_execute "echo $v_bpool_name/BOOT/debian /boot zfs nodev,relatime,x-systemd.requires=zfs-mount.service,x-systemd.device-timeout=10 0 0 > /etc/fstab"
 
-chroot_execute "zfs set mountpoint=legacy $v_rpool_name/var/log"
-chroot_execute "echo $v_rpool_name/var/log /var/log zfs nodev,relatime 0 0 >> /etc/fstab"
-chroot_execute "zfs set mountpoint=legacy $v_rpool_name/var/spool"
-chroot_execute "echo $v_rpool_name/var/spool /var/spool zfs nodev,relatime 0 0 >> /etc/fstab"
-chroot_execute "zfs set mountpoint=legacy $v_rpool_name/var/tmp"
-chroot_execute "echo $v_rpool_name/var/tmp /var/tmp zfs nodev,relatime 0 0 >> /etc/fstab"
-chroot_execute "zfs set mountpoint=legacy $v_rpool_name/tmp"
-chroot_execute "echo $v_rpool_name/tmp /tmp zfs nodev,relatime 0 0 >> /etc/fstab"
+# chroot_execute "zfs set mountpoint=legacy $v_rpool_name/var/log"
+# chroot_execute "echo $v_rpool_name/var/log /var/log zfs nodev,relatime 0 0 >> /etc/fstab"
+# chroot_execute "zfs set mountpoint=legacy $v_rpool_name/var/spool"
+# chroot_execute "echo $v_rpool_name/var/spool /var/spool zfs nodev,relatime 0 0 >> /etc/fstab"
+# chroot_execute "zfs set mountpoint=legacy $v_rpool_name/var/tmp"
+# chroot_execute "echo $v_rpool_name/var/tmp /var/tmp zfs nodev,relatime 0 0 >> /etc/fstab"
+# chroot_execute "zfs set mountpoint=legacy $v_rpool_name/tmp"
+# chroot_execute "echo $v_rpool_name/tmp /tmp zfs nodev,relatime 0 0 >> /etc/fstab"
 
 echo "========= add swap, if defined"
 if [[ $v_swap_size -gt 0 ]]; then
