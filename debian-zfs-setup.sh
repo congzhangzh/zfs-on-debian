@@ -1352,6 +1352,7 @@ chroot_execute "sed -i 's/quiet//g' /etc/default/grub"
 chroot_execute "sed -i 's/splash//g' /etc/default/grub"
 chroot_execute "echo 'GRUB_DISABLE_OS_PROBER=true'   >> /etc/default/grub"
 
+#TODO: how to make this happen after the install is finished, when grub-install happens later again?
 for ((i = 1; i < ${#efi_disks_partitions[@]}; i++)); do
   dd if="/dev/disk/by-partuuid/${efi_disks_partitions[0]}" of="/dev/disk/by-partuuid/${efi_disks_partitions[i]}"
 done
@@ -1465,6 +1466,10 @@ chroot_execute "echo $v_bpool_name/BOOT/debian /boot zfs nodev,relatime,x-system
 echo "========= add swap, if defined"
 if [[ $v_swap_size -gt 0 ]]; then
   chroot_execute "echo /dev/zvol/$v_rpool_name/swap none swap discard 0 0 >> /etc/fstab"
+fi
+
+if (( c_efimode_enabled == 1 )); then
+  chroot_execute "echo /dev/disk/by-partuuid/${efi_disks_partitions[0]} /boot/efi vfat defaults 0 2 >> /etc/fstab"
 fi
 
 chroot_execute "echo RESUME=none > /etc/initramfs-tools/conf.d/resume"
