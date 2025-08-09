@@ -26,3 +26,30 @@ cat /tmp/zfs-hetzner-vm/disks.log
 cat /tmp/zfs-hetzner-vm/install.log
 ```
 
+# TODOs
+## bpool import probem (done)
+```bash
+cat > /etc/initramfs-tools/scripts/local-top/zfs-import-bpool << 'EOF'
+#!/bin/sh
+PREREQ="zfs"
+
+prereqs() {
+    echo "$PREREQ"
+}
+
+case $1 in
+prereqs)
+    prereqs
+    exit 0
+    ;;
+esac
+
+if ! zpool list bpool >/dev/null 2>&1; then
+    zpool import -N bpool 2>/dev/null || \
+    zpool import -d /dev/disk/by-path -N bpool 2>/dev/null || \
+    zpool import -c /etc/zfs/zpool.cache -N bpool 2>/dev/null || true
+fi
+EOF
+
+chmod +x /etc/initramfs-tools/scripts/local-top/zfs-import-bpool
+```

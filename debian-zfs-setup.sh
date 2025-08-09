@@ -1326,6 +1326,31 @@ cp /etc/zpool.cache "$c_zfs_mount_dir/etc/zfs/zpool.cache"
 echo "========setting up zfs module parameters========"
 chroot_execute "echo options zfs zfs_arc_max=$((v_zfs_arc_max_mb * 1024 * 1024)) >> /etc/modprobe.d/zfs.conf"
 
+echo "========setting up zfs import bpool=========="
+cat > "$c_zfs_mount_dir/etc/initramfs-tools/scripts/local-top/zfs-import-${v_bpool_name}" << EOF
+#!/bin/sh
+PREREQ="zfs"
+
+prereqs() {
+    echo "\$PREREQ"
+}
+
+case \$1 in
+prereqs)
+    prereqs
+    exit 0
+    ;;
+esac
+
+if ! zpool list ${v_bpool_name} >/dev/null 2>&1; then
+    zpool import -N ${v_bpool_name} 2>/dev/null || \
+    zpool import -d /dev/disk/by-path -N ${v_bpool_name} 2>/dev/null || \
+    zpool import -c /etc/zfs/zpool.cache -N ${v_bpool_name} 2>/dev/null || true
+fi
+EOF
+
+chmod +x "$c_zfs_mount_dir/etc/initramfs-tools/scripts/local-top/zfs-import-${v_bpool_name}"
+
 echo "======= setting up grub =========="
 if (( c_efimode_enabled == 1 )); then
   chroot_execute "apt install --yes grub-efi-amd64"
