@@ -1058,6 +1058,7 @@ echo "Mount directory prepared"
 echo "Creating boot pool: $v_bpool_name"
 # shellcheck disable=SC2086
 zpool create \
+  -m none \
   -o cachefile=/etc/zpool.cache \
   -o compatibility=grub2 \
   -O mountpoint=none -R $c_zfs_mount_dir -f \
@@ -1079,9 +1080,10 @@ fi
 # shellcheck disable=SC2086
 echo -n "$v_passphrase" | zpool create \
   $v_rpool_tweaks \
+  -m none \
   -o cachefile=/etc/zpool.cache \
   "${encryption_options[@]}" \
-  -O mountpoint=/ -R $c_zfs_mount_dir -f \
+  -O mountpoint=none -R $c_zfs_mount_dir -f \
   $v_rpool_name $pools_mirror_option "${rpool_disks_partitions[@]}"
 
 echo "Creating ZFS datasets..."
