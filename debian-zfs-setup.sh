@@ -20,6 +20,7 @@ OPTIONS:
     --arc-max MB            Set ZFS ARC max size in MB
     --encrypt               Enable root pool encryption
     --experimental          Use experimental ZFS packages
+    --ipv4-only             Disable IPv6 configuration even if available
 
 DEBUG OPTIONS:
     DEBUG=1                 Enable debug mode (same as -d)
@@ -59,7 +60,7 @@ EOF
 parse_arguments() {
   # Define options
   local short_opts="hdj:n:"
-  local long_opts="help,debug,jump-to:,no-skips:,hostname:,swap-size:,arc-max:,encrypt,experimental"
+  local long_opts="help,debug,jump-to:,no-skips:,hostname:,swap-size:,arc-max:,encrypt,experimental,ipv4-only"
   
   # Parse arguments
   local parsed
@@ -118,6 +119,10 @@ parse_arguments() {
         ;;
       --experimental)
         export PRESET_EXPERIMENTAL=1
+        shift
+        ;;
+      --ipv4-only)
+        export PRESET_IPV4_ONLY=1
         shift
         ;;
       --)
@@ -1120,9 +1125,28 @@ ff02::2 ip6-allrouters
 ff02::3 ip6-allhosts
 CONF
 
-ip6addr_prefix=$(ip -6 a s | grep -E "inet6.+global" | sed -nE 's/.+inet6\s(([0-9a-z]{1,4}:){4,4}).+/\1/p' | head -n 1)
+# Detect and configure network (IPv4/IPv6)
+if [[ "${PRESET_IPV4_ONLY:-0}" == "1" ]]; then
+  echo "IPv4-only mode enabled via command line"
+  ipv6_config_enabled=0
+  ip6addr_prefix=""  # Explicitly set to avoid nounset issues
+else
+  # Detect IPv6 configuration - use || true to prevent script exit
+  ip6addr_prefix=$(ip -6 a s | grep -E "inet6.+global" | sed -nE 's/.+inet6\s(([0-9a-z]{1,4}:){4,4}).+/\1/p' | head -n 1 || true)
+  if [[ -n "${ip6addr_prefix:-}" ]]; then
+    echo "IPv6 detected: ${ip6addr_prefix}::/64"
+    ipv6_config_enabled=1
+  else
+    echo "No IPv6 global address detected"
+    ipv6_config_enabled=0
+    ip6addr_prefix=""  # Explicitly set to avoid nounset issues
+  fi
+fi
 
-cat <<CONF > "$c_zfs_mount_dir/etc/systemd/network/10-eth0.network"
+# Generate network configuration
+if [[ $ipv6_config_enabled -eq 1 ]] && [[ -n "${ip6addr_prefix:-}" ]]; then
+  echo "Configuring dual-stack network (IPv4 + IPv6)"
+  cat <<CONF > "$c_zfs_mount_dir/etc/systemd/network/10-eth0.network"
 [Match]
 Name=eth0
 
@@ -1131,6 +1155,16 @@ DHCP=ipv4
 Address=${ip6addr_prefix}:1/64
 Gateway=fe80::1
 CONF
+else
+  echo "Configuring IPv4-only network"
+  cat <<CONF > "$c_zfs_mount_dir/etc/systemd/network/10-eth0.network"
+[Match]
+Name=eth0
+
+[Network]
+DHCP=ipv4
+CONF
+fi
 chroot_execute "systemctl enable systemd-networkd.service"
 
 echo "======= preparing the jail for chroot =========="
