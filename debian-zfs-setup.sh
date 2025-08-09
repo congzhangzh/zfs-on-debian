@@ -20,39 +20,85 @@ if [[ $DEBUG == 1 ]]; then
 fi
 
 # Debug jump functionality
-# Usage: DEBUG_JUMP=function_name or DEBUG_JUMP=line_number_range
+# Usage: DEBUG_JUMP_TO=function_name or DEBUG_JUMP_TO=line_number_range
+# Usage: DEBUG_NO_SKIPS=1 to disable skipping (only mark target, but execute all)
+# Usage: DEBUG_NO_SKIPS=func1,func2,300-400 to disable skipping for specific functions/lines
 function debug_check_jump {
-  if [[ -n "${DEBUG_JUMP:-}" ]]; then
+  if [[ -n "${DEBUG_JUMP_TO:-}" ]]; then
     local current_line=${BASH_LINENO[1]:-$LINENO}
     local current_func=${FUNCNAME[1]:-main}
     
     # Support function name jumping
-    if [[ "$DEBUG_JUMP" == "$current_func" ]]; then
-      echo "=== DEBUG: Jumped to function $current_func (line: $current_line) ==="
-      unset DEBUG_JUMP  # Avoid repeated jumps
+    if [[ "$DEBUG_JUMP_TO" == "$current_func" ]]; then
+      echo "=== DEBUG: *** TARGET REACHED *** function $current_func (line: $current_line) ==="
+      unset DEBUG_JUMP_TO  # Avoid repeated jumps
       return 0
     fi
     
     # Support line number range jumping (format: start-end or exact)
-    if [[ "$DEBUG_JUMP" =~ ^[0-9]+(-[0-9]+)?$ ]]; then
-      if [[ "$DEBUG_JUMP" =~ - ]]; then
-        local start_line=${DEBUG_JUMP%-*}
-        local end_line=${DEBUG_JUMP#*-}
+    if [[ "$DEBUG_JUMP_TO" =~ ^[0-9]+(-[0-9]+)?$ ]]; then
+      if [[ "$DEBUG_JUMP_TO" =~ - ]]; then
+        local start_line=${DEBUG_JUMP_TO%-*}
+        local end_line=${DEBUG_JUMP_TO#*-}
         if [[ $current_line -ge $start_line && $current_line -le $end_line ]]; then
-          echo "=== DEBUG: Jumped to line range $DEBUG_JUMP (current: $current_line, function: $current_func) ==="
-          unset DEBUG_JUMP
+          echo "=== DEBUG: *** TARGET REACHED *** line range $DEBUG_JUMP_TO (current: $current_line, function: $current_func) ==="
+          unset DEBUG_JUMP_TO
           return 0
         fi
       else
-        if [[ $current_line -eq $DEBUG_JUMP ]]; then
-          echo "=== DEBUG: Jumped to line $DEBUG_JUMP (function: $current_func) ==="
-          unset DEBUG_JUMP
+        if [[ $current_line -eq $DEBUG_JUMP_TO ]]; then
+          echo "=== DEBUG: *** TARGET REACHED *** line $DEBUG_JUMP_TO (function: $current_func) ==="
+          unset DEBUG_JUMP_TO
           return 0
         fi
       fi
-      # If not at target line yet, skip current function
-      echo "=== DEBUG: Skipping function $current_func (line: $current_line, target: $DEBUG_JUMP) ==="
-      return 1
+      
+      # Check if we should skip or just mark
+      local no_skip=0
+      
+      # Parse DEBUG_NO_SKIPS settings
+      if [[ "${DEBUG_NO_SKIPS:-}" == "1" ]]; then
+        no_skip=1
+      elif [[ -n "${DEBUG_NO_SKIPS:-}" ]]; then
+        # Parse comma-separated list of functions and line ranges
+        IFS=',' read -ra no_skip_items <<< "$DEBUG_NO_SKIPS"
+        for item in "${no_skip_items[@]}"; do
+          item=$(echo "$item" | tr -d ' ')  # Remove spaces
+          if [[ "$item" =~ ^[0-9]+-[0-9]+$ ]]; then
+            # Line range format: start-end
+            local item_start=${item%-*}
+            local item_end=${item#*-}
+            if [[ $current_line -ge $item_start && $current_line -le $item_end ]]; then
+              no_skip=1
+              echo "=== DEBUG: NO_SKIP matched line range $item (current: $current_line) ==="
+              break
+            fi
+          elif [[ "$item" =~ ^[0-9]+$ ]]; then
+            # Single line number
+            if [[ $current_line -eq $item ]]; then
+              no_skip=1
+              echo "=== DEBUG: NO_SKIP matched line $item ==="
+              break
+            fi
+          else
+            # Function name
+            if [[ "$current_func" == "$item" ]]; then
+              no_skip=1
+              echo "=== DEBUG: NO_SKIP matched function $item ==="
+              break
+            fi
+          fi
+        done
+      fi
+      
+      if [[ $no_skip -eq 1 ]]; then
+        echo "=== DEBUG: Executing function $current_func (line: $current_line, target: $DEBUG_JUMP_TO) [NO_SKIPS enabled] ==="
+        return 0
+      else
+        # If not at target line yet, skip current function
+        echo "=== DEBUG: Skipping function $current_func (line: $current_line, target: $DEBUG_JUMP_TO) ==="
+        return 1
+      fi
     fi
   fi
   return 0
