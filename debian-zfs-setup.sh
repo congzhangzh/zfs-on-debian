@@ -14,8 +14,49 @@ To detach from screen console, hit Ctrl-d then a
 end_header_info
 
 if [[ $DEBUG == 1 ]]; then
+  # Set debug prompt to show script:line:function
+  export PS4='+ ${BASH_SOURCE##*/}:${LINENO}:${FUNCNAME[0]:-main}(): '
   set -x 
 fi
+
+# Debug jump functionality
+# Usage: DEBUG_JUMP=function_name or DEBUG_JUMP=line_number_range
+function debug_check_jump {
+  if [[ -n "${DEBUG_JUMP:-}" ]]; then
+    local current_line=${BASH_LINENO[1]:-$LINENO}
+    local current_func=${FUNCNAME[1]:-main}
+    
+    # Support function name jumping
+    if [[ "$DEBUG_JUMP" == "$current_func" ]]; then
+      echo "=== DEBUG: Jumped to function $current_func (line: $current_line) ==="
+      unset DEBUG_JUMP  # Avoid repeated jumps
+      return 0
+    fi
+    
+    # Support line number range jumping (format: start-end or exact)
+    if [[ "$DEBUG_JUMP" =~ ^[0-9]+(-[0-9]+)?$ ]]; then
+      if [[ "$DEBUG_JUMP" =~ - ]]; then
+        local start_line=${DEBUG_JUMP%-*}
+        local end_line=${DEBUG_JUMP#*-}
+        if [[ $current_line -ge $start_line && $current_line -le $end_line ]]; then
+          echo "=== DEBUG: Jumped to line range $DEBUG_JUMP (current: $current_line, function: $current_func) ==="
+          unset DEBUG_JUMP
+          return 0
+        fi
+      else
+        if [[ $current_line -eq $DEBUG_JUMP ]]; then
+          echo "=== DEBUG: Jumped to line $DEBUG_JUMP (function: $current_func) ==="
+          unset DEBUG_JUMP
+          return 0
+        fi
+      fi
+      # If not at target line yet, skip current function
+      echo "=== DEBUG: Skipping function $current_func (line: $current_line, target: $DEBUG_JUMP) ==="
+      return 1
+    fi
+  fi
+  return 0
+}
 
 set -o errexit
 set -o pipefail
@@ -96,6 +137,7 @@ CONF
 }
 
 function install_host_zfs {
+  debug_check_jump || return 0
   # Install compatible ZFS on host system
   # This function ensures ZFS version compatibility between host and target
   # Minimum supported host version: Debian 12 (bookworm)
@@ -193,6 +235,7 @@ function print_variables {
 }
 
 function display_intro_banner {
+  debug_check_jump || return 0
   # shellcheck disable=SC2119
   print_step_info_header
 
@@ -264,6 +307,7 @@ function initial_load_debian_zed_cache {
 }
 
 function find_suitable_disks {
+  debug_check_jump || return 0
   # shellcheck disable=SC2119
   print_step_info_header
 
@@ -317,6 +361,7 @@ If you think this is a bug, please open an issue on https://github.com/terem42/z
 }
 
 function select_disks {
+  debug_check_jump || return 0
   # shellcheck disable=SC2119
   print_step_info_header
 
