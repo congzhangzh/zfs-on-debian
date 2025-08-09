@@ -3,7 +3,7 @@
 # Help function
 show_help() {
 cat << 'EOF'
-Debian ZFS Setup Script - Automated ZFS root installation for Hetzner VPS
+Debian ZFS Setup Script - Automated ZFS root installation for Debian from Rescue console or Live ISO
 
 USAGE:
     debian-zfs-setup.sh [OPTIONS]
@@ -21,6 +21,10 @@ OPTIONS:
     --encrypt               Enable root pool encryption
     --experimental          Use experimental ZFS packages
     --ipv4-only             Disable IPv6 configuration even if available
+    --no-reboot             Disable automatic reboot at the end of the installation
+    --keyboard-layout KEYBOARD_LAYOUT
+                          Set keyboard layout (default: us)
+                          Supported layouts: de, us, en, en-us
 
 DEBUG OPTIONS:
     DEBUG=1                 Enable debug mode (same as -d)
@@ -52,7 +56,10 @@ NOTES:
     - All data on selected disks will be destroyed
     - Run in screen session for network resilience: screen -S zfs
     - Use Ctrl+C to abort, Esc twice to cancel dialogs
-
+    - Script automatically handles IPv6/IPv4 network configuration
+    - ZFS swap volumes use optimized 8K block size to avoid warnings
+    - Disable autoreboot to enable user to check the installation
+    - Keyboard layout can be set with --keyboard-layout option
 EOF
 }
 
@@ -60,7 +67,7 @@ EOF
 parse_arguments() {
   # Define options
   local short_opts="hdj:n:"
-  local long_opts="help,debug,jump-to:,no-skips:,hostname:,swap-size:,arc-max:,encrypt,experimental,ipv4-only"
+  local long_opts="help,debug,jump-to:,no-skips:,hostname:,swap-size:,arc-max:,encrypt,experimental,ipv4-only,no-reboot,keyboard-layout:"
   
   # Parse arguments
   local parsed
@@ -124,6 +131,14 @@ parse_arguments() {
       --ipv4-only)
         export PRESET_IPV4_ONLY=1
         shift
+        ;;
+      --no-reboot)
+        export PRESET_NO_REBOOT=1
+        shift
+        ;;
+      --keyboard-layout)
+        export PRESET_KEYBOARD_LAYOUT="$2"
+        shift 2
         ;;
       --)
         shift
@@ -274,6 +289,7 @@ v_encrypt_rpool=             # 0=false, 1=true
 v_passphrase=
 v_zfs_experimental=
 v_suitable_disks=()
+v_keyboard_layout=${PRESET_KEYBOARD_LAYOUT:-us}
 
 # Constants
 c_default_zfs_arc_max_mb=$(
@@ -337,10 +353,10 @@ function install_host_zfs {
   echo "======= installing zfs on host system =========="
   setup_host_apt_sources || return 1
 
-  if host_version_num=$(lsb_release -rs 2>/dev/null) && [[ "$host_version_num" -ge 12 ]]; then
+  if host_version_num=$(lsb_release -rs 2>/dev/null) && dpkg --compare-versions "$host_version_num" ge 12; then
     # Set up ZFS installation based on host system
     echo "zfs-dkms zfs-dkms/note-incompatible-licenses note true" | debconf-set-selections
-    apt install --yes zfs-dkms zfsutils-linux -y
+    apt install --yes zfs-dkms zfsutils-linux gdisk dosfstools
     export PATH=$PATH:/usr/sbin
     zfs --version
     echo "ZFS installation completed"
@@ -1036,22 +1052,30 @@ echo "Mount directory prepared"
     fi
   fi
 
+# Create boot pool without automatic mounting to avoid directory conflicts
+[[ -d $c_zfs_mount_dir ]] || mkdir -p $c_zfs_mount_dir
+
+echo "Creating boot pool: $v_bpool_name"
 # shellcheck disable=SC2086
 zpool create \
   -o cachefile=/etc/zpool.cache \
   -o compatibility=grub2 \
-  -O mountpoint=/boot -R $c_zfs_mount_dir -f \
+  -O mountpoint=none -R $c_zfs_mount_dir -f \
   $v_bpool_name $pools_mirror_option "${bpool_disks_partitions[@]}"
 
+# Clean up any auto-created directories from pool creation
+# if [[ -d $c_zfs_mount_dir/boot ]]; then
+#   echo "Cleaning up auto-created boot directory from pool creation"
+#   umount -R $c_zfs_mount_dir/boot 2>/dev/null || true
+#   rm -rf $c_zfs_mount_dir/boot
+# fi
 
-[[ -d $c_zfs_mount_dir/boot ]] && {
-  echo "uncondational auto create boot directory by zpool create, need investigate"
-  echo "temp unmount and remove $c_zfs_mount_dir/boot directory"
-  umount -R $c_zfs_mount_dir/boot 2>/dev/null || true
-  rm -rf $c_zfs_mount_dir/boot
-}
+# Create root pool
+echo "Creating root pool: $v_rpool_name"
+if [[ $v_encrypt_rpool == "1" ]]; then
+  echo "Root pool will be encrypted"
+fi
 
-# 手动运行相同的清理步骤
 # shellcheck disable=SC2086
 echo -n "$v_passphrase" | zpool create \
   $v_rpool_tweaks \
@@ -1059,12 +1083,20 @@ echo -n "$v_passphrase" | zpool create \
   "${encryption_options[@]}" \
   -O mountpoint=/ -R $c_zfs_mount_dir -f \
   $v_rpool_name $pools_mirror_option "${rpool_disks_partitions[@]}"
+
+echo "Creating ZFS datasets..."
 zfs create -o canmount=off -o mountpoint=none "$v_rpool_name/ROOT"
 zfs create -o canmount=off -o mountpoint=none "$v_bpool_name/BOOT"
+
+echo "Creating and mounting root filesystem..."
 zfs create -o canmount=noauto -o mountpoint=/ "$v_rpool_name/ROOT/debian"
 zfs mount "$v_rpool_name/ROOT/debian"
+
+echo "Creating and mounting boot filesystem..."
 zfs create -o canmount=noauto -o mountpoint=/boot "$v_bpool_name/BOOT/debian"
 zfs mount "$v_bpool_name/BOOT/debian"
+
+echo "ZFS pools and datasets created successfully"
 # zfs create                                 "$v_rpool_name/home"
 # #zfs create -o mountpoint=/root             "$v_rpool_name/home/root"
 # zfs create -o canmount=off                 "$v_rpool_name/var"
@@ -1082,8 +1114,17 @@ zfs mount "$v_bpool_name/BOOT/debian"
 # zfs create -o com.sun:auto-snapshot=false -o canmount=on -o mountpoint=/tmp "$v_rpool_name/tmp"
 # chmod 1777 "$c_zfs_mount_dir/tmp"
 if [[ $v_swap_size -gt 0 ]]; then
+  # Use 8K volblocksize for swap to avoid ZFS warnings (minimum recommended)
+  local swap_blocksize=8192
+  local system_pagesize
+  system_pagesize=$(getconf PAGESIZE)
+  if [[ $system_pagesize -gt $swap_blocksize ]]; then
+    swap_blocksize=$system_pagesize
+  fi
+  echo "Creating swap volume with ${swap_blocksize}-byte blocks"
+  
   zfs create \
-    -V "${v_swap_size}G" -b "$(getconf PAGESIZE)" \
+    -V "${v_swap_size}G" -b "$swap_blocksize" \
     -o compression=zle -o logbias=throughput -o sync=always -o primarycache=metadata -o secondarycache=none -o com.sun:auto-snapshot=false \
     "$v_rpool_name/swap"
   udevadm settle
@@ -1185,37 +1226,50 @@ sed -i 's/# fr_FR.UTF-8/fr_FR.UTF-8/' "$c_zfs_mount_dir/etc/locale.gen"
 sed -i 's/# de_AT.UTF-8/de_AT.UTF-8/' "$c_zfs_mount_dir/etc/locale.gen"
 sed -i 's/# de_DE.UTF-8/de_DE.UTF-8/' "$c_zfs_mount_dir/etc/locale.gen"
 
-chroot_execute 'cat <<CONF | debconf-set-selections
-locales locales/default_environment_locale      select  en_US.UTF-8
-keyboard-configuration  keyboard-configuration/store_defaults_in_debconf_db     boolean true
-keyboard-configuration  keyboard-configuration/variant  select  German
-keyboard-configuration  keyboard-configuration/unsupported_layout       boolean true
-keyboard-configuration  keyboard-configuration/modelcode        string  pc105
-keyboard-configuration  keyboard-configuration/unsupported_config_layout        boolean true
-keyboard-configuration  keyboard-configuration/layout   select  German
-keyboard-configuration  keyboard-configuration/layoutcode       string  de
-keyboard-configuration  keyboard-configuration/optionscode      string
-keyboard-configuration  keyboard-configuration/toggle   select  No toggling
-keyboard-configuration  keyboard-configuration/xkb-keymap       select  de
-keyboard-configuration  keyboard-configuration/switch   select  No temporary switch
-keyboard-configuration  keyboard-configuration/unsupported_config_options       boolean true
-keyboard-configuration  keyboard-configuration/ctrl_alt_bksp    boolean false
-keyboard-configuration  keyboard-configuration/variantcode      string
-keyboard-configuration  keyboard-configuration/model    select  Generic 105-key PC (intl.)
-keyboard-configuration  keyboard-configuration/altgr    select  The default for the keyboard layout
-keyboard-configuration  keyboard-configuration/compose  select  No compose key
-keyboard-configuration  keyboard-configuration/unsupported_options      boolean true
-console-setup   console-setup/fontsize-fb47     select  8x16
-console-setup   console-setup/store_defaults_in_debconf_db      boolean true
-console-setup   console-setup/codeset47 select  # Latin1 and Latin5 - western Europe and Turkic languages
-console-setup   console-setup/fontface47        select  Fixed
-console-setup   console-setup/fontsize  string  8x16
-console-setup   console-setup/charmap47 select  UTF-8
-console-setup   console-setup/fontsize-text47   select  8x16
-console-setup   console-setup/codesetcode       string  Lat15
-tzdata tzdata/Areas select Europe
-tzdata tzdata/Zones/Europe select Vienna
-CONF'
+case $v_keyboard_layout in
+  de)
+    chroot_execute 'cat <<CONF | debconf-set-selections
+    locales locales/default_environment_locale      select  en_US.UTF-8
+    keyboard-configuration  keyboard-configuration/store_defaults_in_debconf_db     boolean true
+    keyboard-configuration  keyboard-configuration/variant  select  German
+    keyboard-configuration  keyboard-configuration/unsupported_layout       boolean true
+    keyboard-configuration  keyboard-configuration/modelcode        string  pc105
+    keyboard-configuration  keyboard-configuration/unsupported_config_layout        boolean true
+    keyboard-configuration  keyboard-configuration/layout   select  German
+    keyboard-configuration  keyboard-configuration/layoutcode       string  de
+    keyboard-configuration  keyboard-configuration/optionscode      string
+    keyboard-configuration  keyboard-configuration/toggle   select  No toggling
+    keyboard-configuration  keyboard-configuration/xkb-keymap       select  de
+    keyboard-configuration  keyboard-configuration/switch   select  No temporary switch
+    keyboard-configuration  keyboard-configuration/unsupported_config_options       boolean true
+    keyboard-configuration  keyboard-configuration/ctrl_alt_bksp    boolean false
+    keyboard-configuration  keyboard-configuration/variantcode      string
+    keyboard-configuration  keyboard-configuration/model    select  Generic 105-key PC (intl.)
+    keyboard-configuration  keyboard-configuration/altgr    select  The default for the keyboard layout
+    keyboard-configuration  keyboard-configuration/compose  select  No compose key
+    keyboard-configuration  keyboard-configuration/unsupported_options      boolean true
+    console-setup   console-setup/fontsize-fb47     select  8x16
+    console-setup   console-setup/store_defaults_in_debconf_db      boolean true
+    console-setup   console-setup/codeset47 select  # Latin1 and Latin5 - western Europe and Turkic languages
+    console-setup   console-setup/fontface47        select  Fixed
+    console-setup   console-setup/fontsize  string  8x16
+    console-setup   console-setup/charmap47 select  UTF-8
+    console-setup   console-setup/fontsize-text47   select  8x16
+    console-setup   console-setup/codesetcode       string  Lat15
+    tzdata tzdata/Areas select Europe
+    tzdata tzdata/Zones/Europe select Vienna
+    CONF'
+    ;;
+  us|en|en-us|*)
+    # default to US
+    chroot_execute 'cat <<CONF | debconf-set-selections
+    locales locales/default_environment_locale      select  en_US.UTF-8
+    tzdata tzdata/Areas select America
+    tzdata tzdata/Zones/America select Los_Angeles
+    CONF'
+    ;;
+
+esac
 
 chroot_execute "dpkg-reconfigure locales -f noninteractive"
 echo -e "LC_ALL=en_US.UTF-8\nLANG=en_US.UTF-8\n" >> "$c_zfs_mount_dir/etc/environment"
@@ -1417,5 +1471,9 @@ chroot_execute "echo RESUME=none > /etc/initramfs-tools/conf.d/resume"
 echo "======= unmounting filesystems and zfs pools =========="
 unmount_and_export_fs
 
-echo "======== setup complete, rebooting ==============="
-reboot
+if [[ $PRESET_NO_REBOOT == "1" ]]; then
+  echo "======== setup complete, please reboot manually ==============="
+else
+  echo "======== setup complete, rebooting ==============="
+  reboot
+fi
