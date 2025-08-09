@@ -1,5 +1,147 @@
 #!/bin/bash
 
+# Help function
+show_help() {
+cat << 'EOF'
+Debian ZFS Setup Script - Automated ZFS root installation for Hetzner VPS
+
+USAGE:
+    debian-zfs-setup.sh [OPTIONS]
+
+OPTIONS:
+    -h, --help              Show this help message
+    -d, --debug             Enable debug mode (set -x with line numbers)
+    -j, --jump-to TARGET    Jump to specific function or line number
+                           Examples: -j find_suitable_disks, -j 600, -j 300-400
+    -n, --no-skips LIST     Disable skipping for specific functions/lines
+                           Examples: -n func1,func2 -n 300-400,func1
+    --hostname NAME         Set target hostname
+    --swap-size GB          Set swap size in GB (0 for no swap)
+    --arc-max MB            Set ZFS ARC max size in MB
+    --encrypt               Enable root pool encryption
+    --experimental          Use experimental ZFS packages
+
+DEBUG OPTIONS:
+    DEBUG=1                 Enable debug mode (same as -d)
+    DEBUG_JUMP_TO=TARGET    Jump to specific target (same as -j)
+    DEBUG_NO_SKIPS=LIST     Disable skipping (same as -n)
+
+EXAMPLES:
+    # Basic installation
+    ./debian-zfs-setup.sh
+
+    # Debug mode with jump to disk selection
+    ./debian-zfs-setup.sh -d -j select_disks
+
+    # Jump to line 600 but execute find_suitable_disks
+    ./debian-zfs-setup.sh -j 600 -n find_suitable_disks
+
+    # Pre-configure some settings
+    ./debian-zfs-setup.sh --hostname myserver --swap-size 4 --arc-max 512
+
+    # Complex debugging scenario
+    ./debian-zfs-setup.sh -d -j 700 -n find_suitable_disks,select_disks,500-600
+
+ENVIRONMENT VARIABLES:
+    DEBIAN_VERSION          Target Debian version (default: bookworm)
+    DEB_PACKAGES_REPO       Debian packages repository URL
+    DEB_SECURITY_REPO       Debian security repository URL
+
+NOTES:
+    - All data on selected disks will be destroyed
+    - Run in screen session for network resilience: screen -S zfs
+    - Use Ctrl+C to abort, Esc twice to cancel dialogs
+
+EOF
+}
+
+# Parse command line arguments using getopt
+parse_arguments() {
+  # Define options
+  local short_opts="hdj:n:"
+  local long_opts="help,debug,jump-to:,no-skips:,hostname:,swap-size:,arc-max:,encrypt,experimental"
+  
+  # Parse arguments
+  local parsed
+  if ! parsed=$(getopt -o "$short_opts" -l "$long_opts" -n "$(basename "$0")" -- "$@"); then
+    echo "Use -h or --help for usage information"
+    exit 1
+  fi
+  
+  # Set parsed arguments
+  eval set -- "$parsed"
+  
+  # Process arguments
+  while true; do
+    case $1 in
+      -h|--help)
+        show_help
+        exit 0
+        ;;
+      -d|--debug)
+        export DEBUG=1
+        shift
+        ;;
+      -j|--jump-to)
+        export DEBUG_JUMP_TO="$2"
+        shift 2
+        ;;
+      -n|--no-skips)
+        export DEBUG_NO_SKIPS="$2"
+        shift 2
+        ;;
+      --hostname)
+        export PRESET_HOSTNAME="$2"
+        shift 2
+        ;;
+      --swap-size)
+        if [[ "$2" =~ ^[0-9]+$ ]]; then
+          export PRESET_SWAP_SIZE="$2"
+        else
+          echo "Error: --swap-size requires a number (GB)"
+          exit 1
+        fi
+        shift 2
+        ;;
+      --arc-max)
+        if [[ "$2" =~ ^[0-9]+$ ]]; then
+          export PRESET_ARC_MAX="$2"
+        else
+          echo "Error: --arc-max requires a number (MB)"
+          exit 1
+        fi
+        shift 2
+        ;;
+      --encrypt)
+        export PRESET_ENCRYPT=1
+        shift
+        ;;
+      --experimental)
+        export PRESET_EXPERIMENTAL=1
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      *)
+        echo "Error: Unexpected argument $1"
+        exit 1
+        ;;
+    esac
+  done
+  
+  # Handle remaining positional arguments
+  if [[ $# -gt 0 ]]; then
+    echo "Error: Unexpected positional arguments: $*"
+    echo "Use -h or --help for usage information"
+    exit 1
+  fi
+}
+
+# Parse arguments first
+parse_arguments "$@"
+
 : <<'end_header_info'
 (c) Andrey Prokopenko job@terem.fr
 fully automatic script to install Debian 12 with ZFS root on Hetzner VPS
@@ -444,13 +586,19 @@ function ask_swap_size {
   # shellcheck disable=SC2119
   print_step_info_header
 
-  local swap_size_invalid_message=
+  # Check for preset value
+  if [[ -n "${PRESET_SWAP_SIZE:-}" ]]; then
+    v_swap_size="$PRESET_SWAP_SIZE"
+    echo "Using preset swap size: ${v_swap_size}GB"
+  else
+    local swap_size_invalid_message=
 
-  while [[ ! $v_swap_size =~ ^[0-9]+$ ]]; do
-    v_swap_size=$(dialog --inputbox "${swap_size_invalid_message}Enter the swap size in GiB (0 for no swap, default: ${c_default_swap_size_gb}GB = 2x memory):" 30 100 "$c_default_swap_size_gb" 3>&1 1>&2 2>&3)
+    while [[ ! $v_swap_size =~ ^[0-9]+$ ]]; do
+      v_swap_size=$(dialog --inputbox "${swap_size_invalid_message}Enter the swap size in GiB (0 for no swap, default: ${c_default_swap_size_gb}GB = 2x memory):" 30 100 "$c_default_swap_size_gb" 3>&1 1>&2 2>&3)
 
-    swap_size_invalid_message="Invalid swap size! "
-  done
+      swap_size_invalid_message="Invalid swap size! "
+    done
+  fi
 
   print_variables v_swap_size
 }
@@ -474,13 +622,19 @@ function ask_zfs_arc_max_size {
   # shellcheck disable=SC2119
   print_step_info_header
 
-  local zfs_arc_max_invalid_message=
+  # Check for preset value
+  if [[ -n "${PRESET_ARC_MAX:-}" ]]; then
+    v_zfs_arc_max_mb="$PRESET_ARC_MAX"
+    echo "Using preset ZFS ARC max size: ${v_zfs_arc_max_mb}MB"
+  else
+    local zfs_arc_max_invalid_message=
 
-  while [[ ! $v_zfs_arc_max_mb =~ ^[0-9]+$ ]]; do
-    v_zfs_arc_max_mb=$(dialog --inputbox "${zfs_arc_max_invalid_message}Enter ZFS ARC cache max size in Mb (minimum 64Mb, enter 0 for ZFS default value, the default will take up to 50% of memory):" 30 100 "$c_default_zfs_arc_max_mb" 3>&1 1>&2 2>&3)
+    while [[ ! $v_zfs_arc_max_mb =~ ^[0-9]+$ ]]; do
+      v_zfs_arc_max_mb=$(dialog --inputbox "${zfs_arc_max_invalid_message}Enter ZFS ARC cache max size in Mb (minimum 64Mb, enter 0 for ZFS default value, the default will take up to 50% of memory):" 30 100 "$c_default_zfs_arc_max_mb" 3>&1 1>&2 2>&3)
 
-    zfs_arc_max_invalid_message="Invalid size! "
-  done
+      zfs_arc_max_invalid_message="Invalid size! "
+    done
+  fi
 
   print_variables v_zfs_arc_max_mb
 }
@@ -539,9 +693,16 @@ function ask_root_password {
 function ask_encryption {
   print_step_info_header
 
-  if dialog --defaultno --yesno 'Do you want to encrypt the root pool?' 30 100; then
+  # Check for preset value
+  if [[ -n "${PRESET_ENCRYPT:-}" ]]; then
     v_encrypt_rpool=1
+    echo "Using preset encryption: enabled"
+  else
+    if dialog --defaultno --yesno 'Do you want to encrypt the root pool?' 30 100; then
+      v_encrypt_rpool=1
+    fi
   fi
+  
   set +x
   if [[ $v_encrypt_rpool == "1" ]]; then
     local passphrase_invalid_message=
@@ -559,8 +720,14 @@ function ask_encryption {
 function ask_zfs_experimental {
   print_step_info_header
 
-  if dialog --defaultno --yesno 'Do you want to use experimental zfs module build?' 30 100; then
+  # Check for preset value
+  if [[ -n "${PRESET_EXPERIMENTAL:-}" ]]; then
     v_zfs_experimental=1
+    echo "Using preset experimental ZFS: enabled"
+  else
+    if dialog --defaultno --yesno 'Do you want to use experimental zfs module build?' 30 100; then
+      v_zfs_experimental=1
+    fi
   fi
 }
 
@@ -568,13 +735,26 @@ function ask_hostname {
   # shellcheck disable=SC2119
   print_step_info_header
 
-  local hostname_invalid_message=
+  # Check for preset value
+  if [[ -n "${PRESET_HOSTNAME:-}" ]]; then
+    if [[ "$PRESET_HOSTNAME" =~ ^[a-z][a-zA-Z0-9_:.-]+$ ]]; then
+      v_hostname="$PRESET_HOSTNAME"
+      echo "Using preset hostname: $v_hostname"
+    else
+      echo "Warning: Invalid preset hostname '$PRESET_HOSTNAME', asking for input"
+      unset PRESET_HOSTNAME
+    fi
+  fi
 
-  while [[ ! $v_hostname =~ ^[a-z][a-zA-Z0-9_:.-]+$ ]]; do
-    v_hostname=$(dialog --inputbox "${hostname_invalid_message}Set the host name" 30 100 "$c_default_hostname" 3>&1 1>&2 2>&3)
+  if [[ -z "${PRESET_HOSTNAME:-}" ]]; then
+    local hostname_invalid_message=
 
-    hostname_invalid_message="Invalid host name! "
-  done
+    while [[ ! $v_hostname =~ ^[a-z][a-zA-Z0-9_:.-]+$ ]]; do
+      v_hostname=$(dialog --inputbox "${hostname_invalid_message}Set the host name" 30 100 "$c_default_hostname" 3>&1 1>&2 2>&3)
+
+      hostname_invalid_message="Invalid host name! "
+    done
+  fi
 
   print_variables v_hostname
 }
