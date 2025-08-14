@@ -48,7 +48,7 @@ EXAMPLES:
     ./debian-zfs-setup.sh -d -j 700 -n find_suitable_disks,select_disks,500-600
 
 ENVIRONMENT VARIABLES:
-    DEBIAN_VERSION          Target Debian version (default: bookworm)
+    DEBIAN_VERSION          Target Debian version (default: trixie)
     DEB_PACKAGES_REPO       Debian packages repository URL
     DEB_SECURITY_REPO       Debian security repository URL
 
@@ -321,7 +321,7 @@ c_efimode_enabled="$(if [[ -d /sys/firmware/efi/efivars ]]; then echo 1; else ec
 # --begin-- debian distribution related functions
 # Constants (can be overridden by environment variables)
 # Debian version - change this to upgrade to a different version (e.g., trixie for Debian 13)
-c_debian_version=${DEBIAN_VERSION:-bookworm}
+c_debian_version=${DEBIAN_VERSION:-trixie}
 # Mirror repositories - can use 163 mirror: http://mirrors.163.com/debian
 c_deb_packages_repo=${DEB_PACKAGES_REPO:-https://deb.debian.org/debian}
 c_deb_security_repo=${DEB_SECURITY_REPO:-https://deb.debian.org/debian-security}
