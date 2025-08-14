@@ -17,7 +17,8 @@ screen -S zfs # your can recover by **screen -x zfs** if later reconnect
 sudo su
 #Tips: use -h to get what you can customization
 #curl -sSl  https://raw.githubusercontent.com/congzhangzh/zfs-on-debian/main/debian-zfs-setup.sh | bash -s -- -h
-curl -sSl https://raw.githubusercontent.com/congzhangzh/zfs-on-debian/main/debian-zfs-setup.sh | bash -s --  --debug --no-reboot --keyboard-layout us --ipv4-only
+# curl -sSl https://raw.githubusercontent.com/congzhangzh/zfs-on-debian/main/debian-zfs-setup.sh | bash -s --  --debug --no-reboot --keyboard-layout us --ipv4-only
+curl -sSl https://raw.githubusercontent.com/congzhangzh/zfs-on-debian/main/debian-zfs-setup.sh | bash -s --  --no-reboot --keyboard-layout us --ipv4-only
 ```
 # Debug Tips
 ```bash

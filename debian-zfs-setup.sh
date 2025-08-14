@@ -308,8 +308,8 @@ c_default_swap_size_gb=$(
   echo $(((total_mem_mb * 2 + 1023) / 1024))
 )
 c_default_bpool_tweaks="-o ashift=12 -O compression=lz4"
-#c_default_rpool_tweaks="-o ashift=12 -O acltype=posixacl -O compression=zstd-9 -O dnodesize=auto -O relatime=on -O xattr=sa -O normalization=formD"
-c_default_rpool_tweaks="-o ashift=12 -O acltype=posixacl -O compression=lz4 -O dnodesize=auto -O relatime=on -O xattr=sa -O normalization=formD"
+c_default_rpool_tweaks="-o ashift=12 -O acltype=posixacl -O compression=zstd-9 -O dnodesize=auto -O relatime=on -O xattr=sa -O normalization=formD"
+#c_default_rpool_tweaks="-o ashift=12 -O acltype=posixacl -O compression=lz4 -O dnodesize=auto -O relatime=on -O xattr=sa -O normalization=formD"
 c_default_hostname=terem
 c_zfs_mount_dir=/mnt
 c_log_dir=$(dirname "$(mktemp)")/zfs-hetzner-vm
@@ -1287,7 +1287,8 @@ echo "======= installing latest kernel============="
 chroot_execute "apt install --yes linux-image${v_kernel_variant}-amd64 linux-headers${v_kernel_variant}-amd64 dpkg-dev"
 
 echo "======= installing aux packages =========="
-chroot_execute "apt install --yes man wget curl software-properties-common nano htop gnupg"
+#chroot_execute "apt install --yes man wget curl software-properties-common nano htop gnupg"
+chroot_execute "apt install --yes man wget curl nano htop gnupg"
 
 echo "======= installing zfs packages =========="
 chroot_execute 'echo "zfs-dkms zfs-dkms/note-incompatible-licenses note true" | debconf-set-selections'
