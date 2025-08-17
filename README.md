@@ -12,7 +12,7 @@ Focused on **Debian systems** with intelligent VPS provider detection and simpli
 
 ## ✨ Key Features
 
-- 🎯 **Debian-focused**: Optimized specifically for Debian 10, 11, and 12
+- 🎯 **Debian latest focused**: Optimized specifically for Debian latest, which is Debian Trixie/13 now
 - 🔧 **Simplified ZFS structure**: Reduced complexity while maintaining ZFS benefits  
 - 🌐 **Multi-VPS support**: Auto-detection for Hetzner, Netcup, and generic providers
 - ⚡ **Performance optimized**: LZ4 compression, intelligent swap sizing
@@ -21,7 +21,7 @@ Focused on **Debian systems** with intelligent VPS provider detection and simpli
 
 ## 🚀 Quick Start
 
-### Primary Support: Debian 12 (Recommended)
+### Primary Support: Debian 13 (Recommended)
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/congzhangzh/zfs-on-debian/main/debian-zfs-setup.sh | bash -
@@ -31,23 +31,6 @@ git clone https://github.com/congzhangzh/zfs-on-debian.git
 cd zfs-hetzner-vm
 ./debian-zfs-setup.sh
 ```
-
-### Legacy Debian Versions
-
-<details>
-<summary>Click to expand legacy options</summary>
-
-**Debian 11:**
-```bash
-wget -qO- https://raw.githubusercontent.com/YOUR_USERNAME/zfs-hetzner-vm/main/hetzner-debian11-zfs-setup.sh | bash -
-```
-
-**Debian 10:**
-```bash
-wget -qO- https://raw.githubusercontent.com/YOUR_USERNAME/zfs-hetzner-vm/main/hetzner-debian10-zfs-setup.sh | bash -
-```
-
-</details>
 
 ## 📋 Prerequisites
 
@@ -59,12 +42,14 @@ wget -qO- https://raw.githubusercontent.com/YOUR_USERNAME/zfs-hetzner-vm/main/he
 
 ### Supported VPS Providers
 - ✅ **Hetzner** (Cloud & Dedicated) - Full optimization
-- ✅ **Netcup** (VPS & Root Server) - Native support  
-- ✅ **Generic KVM providers** - Standard compatibility
+- ✅ **Netcup** (VPS & Root Server) - Full optimization
+- ✅ **Virtual Machine** - Standard compatibility
+- ✅ **Physical Machine** - You response for your duty
 
 ## 🛠️ Installation Steps
 
-### 1. Boot into Rescue System
+### 1. Boot into Basic System 
+#### * to Rescue System
 For **Hetzner**:
 TODO: check the router config part?
 - Login to cloud console
@@ -78,20 +63,47 @@ For **Netcup**:
 - Enable rescue system
 - Configure SSH key access
 - Reboot into rescue mode
+#### * to live install environment
+#### * to grub boot to cd environment
 
-### 2. Run Installation (Recommended Method)
+### 2. Run Installation 
+#### 1. From live install environment
+** active terminal if needed **
+Press Ctrl+F3 or Fx
+** active remote ssh if needed **
+```bash
+sudo apt update && sudo apt install htop screen openssh-server vim -y 
+sudo passwd user
+```
+
+```bash
+ssh-copy-id user@your_ip
+ssh user@your_ip
+#TODO
+[ -d ~root/.ssh ] || sudo mkdir -p ~root/.ssh
+sudo cp ~/.ssh/authorized_keys ~root/.ssh
+# for safe
+screen -S zfs # your can recover by **screen -x zfs** if later reconnect
+sudo su
+#Tips: use -h to get what you can customization
+curl -sSl https://raw.githubusercontent.com/congzhangzh/zfs-on-debian/main/debian-zfs-setup.sh | bash -s --  --no-reboot --keyboard-layout us --ipv4-only
+```
+
+#### 2. From rescue environment
 ```bash
 # Start screen session for network reliability
 screen -S zfs-install
 
-# Method 1: Direct download and run (replace YOUR_USERNAME)
-wget -qO- https://raw.githubusercontent.com/congzhangzh/zfs-on-debian/main/debian-zfs-setup.sh | bash -
-
-# Method 2: Clone and run locally (better for customization)
-git clone https://github.com/congzhangzh/zfs-on-debian.git
-cd zfs-hetzner-vm
-./debian-zfs-setup.sh
+wget -qO- https://raw.githubusercontent.com/congzhangzh/zfs-on-debian/main/debian-zfs-setup.sh | bash -s -- --no-reboot --keyboard-layout us --ipv4-only 
 ```
+### 3. From boot.xyz environment (TODO)
+**if you vendor does not support custom cd **
+1. install grub-images
+2. download boot.xyz and copy to /boot/images
+3. update-grub
+4. boot to boot xyz env
+5. boot to debian 
+6. the same step as others
 
 ### 3. Follow Interactive Prompts
 - **Hostname**: Enter desired system hostname
