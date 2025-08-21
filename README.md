@@ -72,8 +72,11 @@ For **Netcup**:
 Press Ctrl+F3 or Fx
 ** active remote ssh if needed **
 ```bash
-sudo apt update && sudo apt install htop screen openssh-server vim -y 
-sudo passwd user
+#Debian default user/pwd is user/live, which is well known, and install process maybe hacked
+sudo passwd user 
+# TODO fix root is needed?
+# sudo passwd 
+sudo apt update && sudo apt install fail2ban htop screen openssh-server vim -y 
 ```
 
 ```bash
