@@ -1508,7 +1508,7 @@ chroot_execute "echo RESUME=none > /etc/initramfs-tools/conf.d/resume"
 echo "======= unmounting filesystems and zfs pools =========="
 unmount_and_export_fs
 
-if [[ $PRESET_NO_REBOOT == "1" ]]; then
+if [[ "${PRESET_NO_REBOOT:-}"  == "1" ]]; then
   echo "======== setup complete, please reboot manually ==============="
 else
   echo "======== setup complete, rebooting ==============="
