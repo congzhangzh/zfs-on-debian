@@ -32,6 +32,23 @@ cd zfs-hetzner-vm
 ./debian-zfs-setup.sh
 ```
 
+### Tips
+1. [Optional] use DEBUG=1 to debug the script, which will log details to /tmp/zfs-on-debian/*.log
+```bash
+export DEBUG=1
+# use cat /tmp/zfs-on-debian/disks.log to check disk problem
+# use cat /tmp/zfs-on-debian/install.log to check install problem
+```
+2. [Optional]use http_proxy and https_proxy to use network proxy
+```bash
+export http_proxy=http://192.168.137.1:1080
+export https_proxy=http://192.168.137.1:1080 # I am not sure here
+```
+3. [Optional] use DEB_PACKAGES_REPO and DEB_SECURITY_REPO to use your Debian repo mirror
+```bash
+export DEB_PACKAGES_REPO=https://mirrors.163.com/debian/
+export DEB_SECURITY_REPO=https://mirrors.163.com/debian-security/
+```
 ## 📋 Prerequisites
 
 ### VPS Requirements

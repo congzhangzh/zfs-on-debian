@@ -312,7 +312,7 @@ c_default_rpool_tweaks="-o ashift=12 -O acltype=posixacl -O compression=zstd-9 -
 #c_default_rpool_tweaks="-o ashift=12 -O acltype=posixacl -O compression=lz4 -O dnodesize=auto -O relatime=on -O xattr=sa -O normalization=formD"
 c_default_hostname=terem
 c_zfs_mount_dir=/mnt
-c_log_dir=$(dirname "$(mktemp)")/zfs-hetzner-vm
+c_log_dir=$(dirname "$(mktemp)")/zfs-on-debian
 c_install_log=$c_log_dir/install.log
 c_lsb_release_log=$c_log_dir/lsb_release.log
 c_disks_log=$c_log_dir/disks.log
