@@ -530,7 +530,7 @@ function find_suitable_disks {
   local mounted_devices
 
   # Get unique real device paths (automatic deduplication)
-  candidate_real_devices=$(find /dev/disk/by-path -type l -not -regex '.+-part[0-9]+$' | xargs -I {} readlink -f {} | sort | uniq)
+  candidate_real_devices=$(find /dev/disk/by-path -type l -maxdepth 1 -not -regex '.+-part[0-9]+$' | xargs -I {} readlink -f {} | sort | uniq)
   mounted_devices="$(df | awk 'BEGIN {getline} {print $1}' | xargs -n 1 lsblk -no pkname 2> /dev/null | sort -u || true)"
 
   while read -r real_device || [[ -n "$real_device" ]]; do
