@@ -530,8 +530,9 @@ function find_suitable_disks {
   local mounted_devices
 
   # Get unique real device paths (automatic deduplication)
-  candidate_real_devices=$(find /dev/disk/by-path -type l -maxdepth 1 -not -regex '.+-part[0-9]+$' | xargs -I {} readlink -f {} | sort | uniq)
+  candidate_real_devices=$(find /dev/disk/by-path -type l -maxdepth 1 -not -regex '.+-part[0-9]+$' | sort | uniq)
   mounted_devices="$(df | awk 'BEGIN {getline} {print $1}' | xargs -n 1 lsblk -no pkname 2> /dev/null | sort -u || true)"
+  canonical_mounted_devices=$(echo "$mounted_devices" | xargs -I {} readlink -f {} | sort | uniq)
 
   while read -r real_device || [[ -n "$real_device" ]]; do
     local device_info
@@ -541,7 +542,7 @@ function find_suitable_disks {
     block_device_basename="$(basename "$real_device")"
 
     if ! grep -q '^ID_TYPE=cd$' <<< "$device_info"; then
-      if ! grep -q "^$block_device_basename\$" <<< "$mounted_devices"; then
+      if ! grep -q "^`readlink -f $real_device`\$" <<< "$canonical_mounted_devices"; then
         v_suitable_disks+=("$real_device")
       fi
     fi
@@ -982,9 +983,9 @@ echo "======= partitioning the disk =========="
     sleep 2
     
     # Verify partitions were created
-    if [[ ! -b "${selected_disk}1" ]] || [[ ! -b "${selected_disk}2" ]] || [[ ! -b "${selected_disk}3" ]]; then
+    if [[ ! -b "${selected_disk}-part1" ]] || [[ ! -b "${selected_disk}-part2" ]] || [[ ! -b "${selected_disk}-part3" ]]; then
       echo "ERROR: Not all partitions were created on $selected_disk"
-      echo "Expected: ${selected_disk}1, ${selected_disk}2, ${selected_disk}3"
+      echo "Expected: ${selected_disk}-part1, ${selected_disk}-part2, ${selected_disk}-part3"
       echo "Actual:"
       ls -la "${selected_disk}"* || true
       exit 1
@@ -1030,9 +1031,9 @@ echo "Mount directory prepared"
   # Get partition UUIDs after device settlement (more reliable than hardcoded -partN)
   for selected_disk in "${v_selected_disks[@]}"; do    
     # Get PARTUUIDs for each partition type
-    rpool_partuuid=$(lsblk -no PARTUUID "${selected_disk}3" 2>/dev/null | tr -d '\n ')
-    bpool_partuuid=$(lsblk -no PARTUUID "${selected_disk}2" 2>/dev/null | tr -d '\n ')
-    efi_partuuid=$(lsblk -no PARTUUID "${selected_disk}1" 2>/dev/null | tr -d '\n ')
+    rpool_partuuid=$(lsblk -no PARTUUID "${selected_disk}-part3" 2>/dev/null | tr -d '\n ')
+    bpool_partuuid=$(lsblk -no PARTUUID "${selected_disk}-part2" 2>/dev/null | tr -d '\n ')
+    efi_partuuid=$(lsblk -no PARTUUID "${selected_disk}-part1" 2>/dev/null | tr -d '\n ')
     
     # Store UUID-based paths
     if [[ -n "$rpool_partuuid" ]]; then
