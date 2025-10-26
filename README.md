@@ -41,7 +41,9 @@ export DEBUG=1
 ```
 2. [Optional]use http_proxy and https_proxy to use network proxy
 ```bash
+#export http_proxy=socks5h://192.168.137.1:1080
 export http_proxy=http://192.168.137.1:1080
+#export https_proxy=socks5h://192.168.137.1:1080
 export https_proxy=http://192.168.137.1:1080 # I am not sure here
 ```
 3. [Optional] use DEB_PACKAGES_REPO and DEB_SECURITY_REPO to use your Debian repo mirror

@@ -353,6 +353,9 @@ function install_host_zfs {
   echo "======= installing zfs on host system =========="
   setup_host_apt_sources || return 1
 
+  echo "Installing kernel headers for current kernel($(uname -r)) if needed"
+  apt install --yes "linux-headers-$(uname -r)" 2>/dev/null; 
+
   if host_version_num=$(lsb_release -rs 2>/dev/null) && dpkg --compare-versions "$host_version_num" ge 12; then
     # Set up ZFS installation based on host system
     echo "zfs-dkms zfs-dkms/note-incompatible-licenses note true" | debconf-set-selections
