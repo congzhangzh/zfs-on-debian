@@ -312,7 +312,7 @@ c_default_rpool_tweaks="-o ashift=12 -O acltype=posixacl -O compression=zstd-9 -
 #c_default_rpool_tweaks="-o ashift=12 -O acltype=posixacl -O compression=lz4 -O dnodesize=auto -O relatime=on -O xattr=sa -O normalization=formD"
 c_default_hostname=terem
 c_zfs_mount_dir=/mnt
-c_log_dir=$(dirname "$(mktemp)")/zfs-hetzner-vm
+c_log_dir=$(dirname "$(mktemp)")/zfs-on-debian
 c_install_log=$c_log_dir/install.log
 c_lsb_release_log=$c_log_dir/lsb_release.log
 c_disks_log=$c_log_dir/disks.log
@@ -352,6 +352,9 @@ function install_host_zfs {
   # Minimum supported host version: Debian 12 (bookworm)
   echo "======= installing zfs on host system =========="
   setup_host_apt_sources || return 1
+
+  echo "Installing kernel headers for current kernel($(uname -r)) if needed"
+  apt install --yes "linux-headers-$(uname -r)" 2>/dev/null; 
 
   if host_version_num=$(lsb_release -rs 2>/dev/null) && dpkg --compare-versions "$host_version_num" ge 12; then
     # Set up ZFS installation based on host system
@@ -530,8 +533,9 @@ function find_suitable_disks {
   local mounted_devices
 
   # Get unique real device paths (automatic deduplication)
-  candidate_real_devices=$(find /dev/disk/by-path -type l -maxdepth 1 -not -regex '.+-part[0-9]+$' | xargs -I {} readlink -f {} | sort | uniq)
+  candidate_real_devices=$(find /dev/disk/by-path -type l -maxdepth 1 -not -regex '.+-part[0-9]+$' | sort | uniq)
   mounted_devices="$(df | awk 'BEGIN {getline} {print $1}' | xargs -n 1 lsblk -no pkname 2> /dev/null | sort -u || true)"
+  canonical_mounted_devices=$(echo "$mounted_devices" | xargs -I {} readlink -f {} | sort | uniq)
 
   while read -r real_device || [[ -n "$real_device" ]]; do
     local device_info
@@ -541,7 +545,7 @@ function find_suitable_disks {
     block_device_basename="$(basename "$real_device")"
 
     if ! grep -q '^ID_TYPE=cd$' <<< "$device_info"; then
-      if ! grep -q "^$block_device_basename\$" <<< "$mounted_devices"; then
+      if ! grep -q "^`readlink -f $real_device`\$" <<< "$canonical_mounted_devices"; then
         v_suitable_disks+=("$real_device")
       fi
     fi
@@ -982,9 +986,9 @@ echo "======= partitioning the disk =========="
     sleep 2
     
     # Verify partitions were created
-    if [[ ! -b "${selected_disk}1" ]] || [[ ! -b "${selected_disk}2" ]] || [[ ! -b "${selected_disk}3" ]]; then
+    if [[ ! -b "${selected_disk}-part1" ]] || [[ ! -b "${selected_disk}-part2" ]] || [[ ! -b "${selected_disk}-part3" ]]; then
       echo "ERROR: Not all partitions were created on $selected_disk"
-      echo "Expected: ${selected_disk}1, ${selected_disk}2, ${selected_disk}3"
+      echo "Expected: ${selected_disk}-part1, ${selected_disk}-part2, ${selected_disk}-part3"
       echo "Actual:"
       ls -la "${selected_disk}"* || true
       exit 1
@@ -1030,9 +1034,9 @@ echo "Mount directory prepared"
   # Get partition UUIDs after device settlement (more reliable than hardcoded -partN)
   for selected_disk in "${v_selected_disks[@]}"; do    
     # Get PARTUUIDs for each partition type
-    rpool_partuuid=$(lsblk -no PARTUUID "${selected_disk}3" 2>/dev/null | tr -d '\n ')
-    bpool_partuuid=$(lsblk -no PARTUUID "${selected_disk}2" 2>/dev/null | tr -d '\n ')
-    efi_partuuid=$(lsblk -no PARTUUID "${selected_disk}1" 2>/dev/null | tr -d '\n ')
+    rpool_partuuid=$(lsblk -no PARTUUID "${selected_disk}-part3" 2>/dev/null | tr -d '\n ')
+    bpool_partuuid=$(lsblk -no PARTUUID "${selected_disk}-part2" 2>/dev/null | tr -d '\n ')
+    efi_partuuid=$(lsblk -no PARTUUID "${selected_disk}-part1" 2>/dev/null | tr -d '\n ')
     
     # Store UUID-based paths
     if [[ -n "$rpool_partuuid" ]]; then
@@ -1504,7 +1508,7 @@ chroot_execute "echo RESUME=none > /etc/initramfs-tools/conf.d/resume"
 echo "======= unmounting filesystems and zfs pools =========="
 unmount_and_export_fs
 
-if [[ $PRESET_NO_REBOOT == "1" ]]; then
+if [[ "${PRESET_NO_REBOOT:-}"  == "1" ]]; then
   echo "======== setup complete, please reboot manually ==============="
 else
   echo "======== setup complete, rebooting ==============="
