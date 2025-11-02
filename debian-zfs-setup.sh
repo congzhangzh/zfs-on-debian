@@ -952,8 +952,8 @@ echo "======= partitioning the disk =========="
     
     # Create all partitions in one go for atomicity
     if (( c_efimode_enabled == 1 )); then
-      sgdisk -a1 \
-        -n1:24K:+1G -t1:EF00 \
+      sgdisk -a16 \
+        -n1:1M:+1G -t1:EF00 \
         -n2:0:+2G -t2:BF01 \
         -n3:0:"$tail_space_parameter" -t3:BF01 \
         "$selected_disk" || {
@@ -961,8 +961,8 @@ echo "======= partitioning the disk =========="
         exit 1
       }
     else
-      sgdisk -a1 \
-        -n1:24K:+1000K -t1:EF02 \
+      sgdisk -a16 \
+        -n1:1M:+1M -t1:EF02 \
         -n2:0:+2G -t2:BF01 \
         -n3:0:"$tail_space_parameter" -t3:BF01 \
         "$selected_disk" || {
