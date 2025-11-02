@@ -307,8 +307,9 @@ c_default_swap_size_gb=$(
   # Calculate 2x memory in GB (rounded up)
   echo $(((total_mem_mb * 2 + 1023) / 1024))
 )
-c_default_bpool_tweaks="-o ashift=12 -O compression=lz4"
-c_default_rpool_tweaks="-o ashift=12 -O acltype=posixacl -O compression=zstd-9 -O dnodesize=auto -O relatime=on -O xattr=sa -O normalization=formD"
+# Optimized for modern NVMe SSDs (8K sectors)
+c_default_bpool_tweaks="-o ashift=13 -O compression=lz4"
+c_default_rpool_tweaks="-o ashift=13 -O acltype=posixacl -O compression=zstd-9 -O dnodesize=auto -O relatime=on -O xattr=sa -O normalization=formD"
 #c_default_rpool_tweaks="-o ashift=12 -O acltype=posixacl -O compression=lz4 -O dnodesize=auto -O relatime=on -O xattr=sa -O normalization=formD"
 c_default_hostname=terem
 c_zfs_mount_dir=/mnt
@@ -1062,6 +1063,7 @@ echo "Mount directory prepared"
 echo "Creating boot pool: $v_bpool_name"
 # shellcheck disable=SC2086
 zpool create \
+  $v_bpool_tweaks \
   -m none \
   -o cachefile=/etc/zpool.cache \
   -o compatibility=grub2 \
